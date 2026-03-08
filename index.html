@@ -1349,11 +1349,8 @@ async function fetchTokens() {
       } catch(e) {}
     }
 
-    // Fallback démo — si tout échoue (100% local sans Vercel)
-    if(!pairs.length) {
-      pairs = getDemoTokens();
-      isDemo = true;
-    }
+    // Fallback — si tout échoue (CORS local)
+    // Pas de démo, on affiche juste un message d'attente
 
     const addrs = (Array.isArray(pairs)?pairs:[]).filter(p=>p?.baseToken).map(p=>p.baseToken.address);
     await fetchKOLMentions(addrs);
@@ -1376,42 +1373,15 @@ async function fetchTokens() {
     loadEl.style.display='none';
 
     if(!scored.length) {
-      // Si 0 tokens passent même sur Vercel → afficher démo avec explication
-      const demoFallback = getDemoTokens();
-      const demoScored = demoFallback.map(p => {
-        const res = scoreToken(p);
-        if(!res) return null;
-        return {...p, score:res.score, label:res.label, labelColor:res.labelColor, indicators:res.indicators, breakdown:res.breakdown, hasKOL:res.hasKOL, isDemo:true};
-      }).filter(Boolean).sort((a,b)=>b.score-a.score);
-
-      if(demoScored.length) {
-        // Montrer démo avec bandeau explicatif
-        const b = document.createElement('div');
-        b.style.cssText='background:rgba(255,107,53,.08);border:1px solid rgba(255,107,53,.25);border-radius:0;padding:10px 20px;font-family:Space Mono,monospace;font-size:10px;color:#ff6b35;text-align:center;';
-        b.innerHTML='📡 Marché calme — 0 token réel ≥45pts détecté. Aperçu avec données de démonstration ci-dessous.';
-        document.querySelector('.scanner-head').after(b);
-        // render démo
-        renderTokenRows(demoScored);
-      } else {
-        rowsEl.innerHTML=`<div style="padding:44px;text-align:center;font-family:Space Mono,monospace;font-size:11px;color:var(--muted2);">
-          ⟳ Marché calme — aucun token de qualité détecté<br>
-          <span style="color:var(--green);font-size:9px;margin-top:6px;display:block;">Actualisation dans 30s</span>
-        </div>`;
-      }
+      rowsEl.innerHTML=`<div style="padding:60px 20px;text-align:center;">
+        <div style="font-family:Space Mono,monospace;font-size:13px;color:var(--muted2);letter-spacing:.05em;">AUCUN TOKEN QUALIFIÉ DÉTECTÉ</div>
+        <div style="font-family:Space Mono,monospace;font-size:10px;color:var(--muted);margin-top:10px;">Le scanner surveille en continu — actualisation dans 30s</div>
+      </div>`;
       return;
     }
 
-    // Badge démo si données simulées
-    if(scored[0]?.isDemo) {
-      const demoBanner = document.getElementById('demo-banner');
-      if(!demoBanner) {
-        const b = document.createElement('div');
-        b.id='demo-banner';
-        b.style.cssText='background:rgba(255,165,2,.1);border:1px solid rgba(255,165,2,.3);border-radius:6px;padding:8px 16px;margin-bottom:0;font-family:Space Mono,monospace;font-size:10px;color:#ffa502;text-align:center;';
-        b.innerHTML='⚠ MODE DÉMO — Données simulées (CORS bloqué en local). Sur Vercel = données réelles Solana.';
-        document.querySelector('.scanner-head').after(b);
-      }
-    }
+    // Supprimer l'éventuel ancien banner démo
+    document.getElementById('demo-banner')?.remove();
 
     // Update KOL badge
     const kolCount = Object.values(kolCache).reduce((s,a)=>s+a.length,0);
