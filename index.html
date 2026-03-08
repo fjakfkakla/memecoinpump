@@ -872,26 +872,86 @@ async function fetchKOLMentions(addrs) {
 }
 
 // ─────────────────────────────────────────────────────────────
-// HARD FILTERS  (reject before scoring)
-// top10 > 45% | liq < 8k | bundle > 5 | dev_alloc > 15%
+// ANTI-RUG FILTERS — rejet immédiat avant scoring
+// Détecte les patterns de rug avec les données DexScreener disponibles
 // ─────────────────────────────────────────────────────────────
 function hardFilter(p) {
-  const liq     = p.liquidity?.usd || 0;
-  const buys    = p.txns?.h24?.buys  || 0;
-  const sells   = p.txns?.h24?.sells || 0;
-  const buyRatio= (buys+sells)>0 ? buys/(buys+sells) : 0;
-  const age     = (Date.now()-(p.pairCreatedAt||Date.now()))/3600000;
-  const c24     = p.priceChange?.h24||0;
+  const liq      = p.liquidity?.usd    || 0;
+  const vol24    = p.volume?.h24       || 0;
+  const vol1h    = p.volume?.h1        || 0;
+  const vol5m    = p.volume?.m5        || 0;
+  const buys24   = p.txns?.h24?.buys   || 0;
+  const sells24  = p.txns?.h24?.sells  || 0;
+  const buys1h   = p.txns?.h1?.buys    || 0;
+  const sells1h  = p.txns?.h1?.sells   || 0;
+  const buys5m   = p.txns?.m5?.buys    || 0;
+  const sells5m  = p.txns?.m5?.sells   || 0;
+  const c24      = p.priceChange?.h24  || 0;
+  const c6h      = p.priceChange?.h6   || 0;
+  const c1h      = p.priceChange?.h1   || 0;
+  const c5m      = p.priceChange?.m5   || 0;
+  const age      = (Date.now()-(p.pairCreatedAt||Date.now()))/3600000;
+  const mcap     = p.marketCap         || 0;
+  const fdv      = p.fdv               || 0;
 
-  if (liq < 8000)        return 'liq<8k';
-  if (liq > 5000000)     return 'liq>5M';
-  if (c24 < 0)           return 'dumping';
-  if (c24 > 8000)        return 'x80+déjà';
-  if (age > 72)          return '>72h';
-  if (buyRatio < 0.40)   return 'sell>buy';
-  // top10 & bundle checks: best-effort from DexScreener data
-  // (full check requires Birdeye/Helius — approximated here)
-  return null; // pass
+  // ── FILTRES DE BASE ──────────────────────────────────────
+  if (liq < 8000)      return 'liq<$8K';
+  if (liq > 5000000)   return 'liq>$5M';
+  if (age > 72)        return '>72h';
+  if (c24 > 9000)      return 'x90+ déjà';
+
+  // ── PATTERN RUG #1 : DUMP EN COURS ───────────────────────
+  // Sell pressure massive sur dernière heure
+  const sellRatio1h = (buys1h+sells1h)>0 ? sells1h/(buys1h+sells1h) : 0;
+  if (sellRatio1h > 0.72) return 'dump 1h (sells>72%)';
+
+  // Sell pressure sur 5 dernières minutes (rug actif)
+  const sellRatio5m = (buys5m+sells5m)>5 ? sells5m/(buys5m+sells5m) : 0;
+  if (sellRatio5m > 0.80) return 'dump 5m actif';
+
+  // Price crash récent : -40% sur 1h = rug en cours
+  if (c1h < -40) return 'crash -40% 1h';
+
+  // Price crash sur 5m : -25% flash = rug actif
+  if (c5m < -25) return 'flash crash 5m';
+
+  // ── PATTERN RUG #2 : PUMP & DUMP ─────────────────────────
+  // Token a fait +500% sur 24h MAIS dernière heure negative = distribution
+  if (c24 > 500 && c1h < -10) return 'pump&dump pattern';
+
+  // Token a fait +200% sur 6h MAIS 1h en rouge = dip forcé
+  if (c6h > 200 && c1h < -20) return 'reversal après pump';
+
+  // ── PATTERN RUG #3 : LIQUIDITÉ DISPARAÎT ─────────────────
+  // Liq/mcap ratio trop bas = LP pas proportionnel = risque retrait LP
+  if (mcap > 0 && liq/mcap < 0.02) return 'liq/mcap<2% (LP risk)';
+
+  // Vol24 ridiculement élevé vs liq = manipulation wash trading
+  const vlr = liq > 0 ? vol24/liq : 0;
+  if (vlr > 80) return 'vol/liq>80x (wash)';
+
+  // ── PATTERN RUG #4 : ACTIVITÉ SUSPECTE ───────────────────
+  // Sell 24h > buy 24h = distribution nette
+  const sellRatio24 = (buys24+sells24)>0 ? sells24/(buys24+sells24) : 0;
+  if (sellRatio24 > 0.65) return 'sells>65% 24h';
+
+  // Ratio buys/sells trop parfait = bots ou fake volume
+  // Si exactement 50/50 sur beaucoup de trades = wash trading
+  const exactHalf = (buys24+sells24)>200 && Math.abs(buys24-sells24)<5;
+  if (exactHalf) return 'wash trading détecté';
+
+  // ── PATTERN RUG #5 : FDV / MCAP SUSPECT ──────────────────
+  // FDV >> McAp = énorme % de supply pas encore vendu = risque dev dump
+  if (fdv > 0 && mcap > 0 && fdv/mcap > 10) return 'FDV/McAp>10x (supply risk)';
+
+  // ── PATTERN RUG #6 : TOKEN TROP RÉCENT + VOLUME IMMÉDIAT ─
+  // < 30 min ET déjà énorme volume = bot launch / bundle
+  if (age < 0.5 && vol1h > 500000) return '<30min+vol>500K (bundle?)';
+
+  // < 1h ET c5m déjà > 200% = pump artificiel
+  if (age < 1 && c5m > 200) return 'pump<1h (bot launch?)';
+
+  return null; // ✅ passe tous les filtres
 }
 
 // ─────────────────────────────────────────────────────────────
