@@ -945,11 +945,43 @@ function hardFilter(p) {
   if (fdv > 0 && mcap > 0 && fdv/mcap > 10) return 'FDV/McAp>10x (supply risk)';
 
   // ── PATTERN RUG #6 : TOKEN TROP RÉCENT + VOLUME IMMÉDIAT ─
-  // < 30 min ET déjà énorme volume = bot launch / bundle
   if (age < 0.5 && vol1h > 500000) return '<30min+vol>500K (bundle?)';
-
-  // < 1h ET c5m déjà > 200% = pump artificiel
   if (age < 1 && c5m > 200) return 'pump<1h (bot launch?)';
+
+  // ── PATTERN RUG #7 : BUNDLE LAUNCH (ta chart) ─────────────
+  // Signature : gros pump au lancement (c24 énorme) MAIS
+  // prix actuel quasi identique au lancement = personne n'a vendu = bundlers hold
+  // = ils vont dump d'un coup
+
+  // Si token < 6h ET c24 > 400% ET c1h très faible = pump initial puis flat = bundle hold
+  if (age < 6 && c24 > 400 && Math.abs(c1h) < 5) return 'bundle hold pattern (flat après pump)';
+
+  // Si vol au lancement très concentré : vol5m >> vol1h/12 = spike initial bots
+  const avgVol5mExpected = (vol1h / 12); // vol moyen par 5min
+  if (vol5m > avgVol5mExpected * 8 && age < 3) return 'vol spike lancement (bots)';
+
+  // ── PATTERN RUG #8 : ESCALIER DE DISTRIBUTION ─────────────
+  // Signature : c24 très fort, c6h correct, c1h faible ou négatif
+  // = le pump est vieux, les early holders distribuent progressivement
+  // Pattern : pump -> flat -> flat -> léger dump (les paliers de ta chart)
+
+  // c24 > 300% mais c6h < 20% = tout le pump est vieux, plus de momentum frais
+  if (c24 > 300 && c6h < 20 && c6h >= 0) return 'distribution escalier (pump>6h old)';
+
+  // c24 fort, c6h moyen, c1h négatif = escalier cassé = début du vrai dump
+  if (c24 > 200 && c6h > 30 && c1h < -5) return 'escalier cassé → dump imminent';
+
+  // ── PATTERN RUG #9 : RATIO VOL/TRADES SUSPECT ─────────────
+  // Peu de trades mais gros volume = quelques gros wallets = concentration = rug risk
+  const totalTrades24 = buys24 + sells24;
+  const avgTradeSize = totalTrades24 > 0 ? vol24 / totalTrades24 : 0;
+  // Trade moyen > $2000 = wallet(s) dominants = pas organique
+  if (avgTradeSize > 2000 && totalTrades24 < 100) return 'trades concentrés (whale control)';
+
+  // ── PATTERN RUG #10 : MCAP / LIQ DISPROPORTIONNÉ ──────────
+  // McAp $800K+ mais liq < $20K = énorme illiquidité = 1 vente = crash
+  if (mcap > 800000 && liq < 20000) return 'mcap/liq dangereux ($800K+, liq<$20K)';
+  if (mcap > 300000 && liq < 10000) return 'mcap/liq dangereux ($300K+, liq<$10K)';
 
   return null; // ✅ passe tous les filtres
 }
@@ -1154,16 +1186,14 @@ function scoreToken(p) {
   // ── FINAL SCORE ──────────────────────────────────────────
   const finalScore = Math.min(100, score);
 
-  // Thresholds — seuil abaissé car DexScreener = données partielles
-  // (Birdeye/Helius donneraient les vraies données wallet/bundle)
-  if (finalScore < 45) return null;
+  // Seuil 60 minimum — filtre les tokens douteux type "iran" / "CSeed"
+  if (finalScore < 60) return null;
 
-  // Label
   let label, labelColor;
   if      (finalScore >= 85) { label='⚡ GOD GEM';        labelColor='#00e676'; }
   else if (finalScore >= 75) { label='🔥 HIGH POTENTIAL'; labelColor='#ffd32a'; }
-  else if (finalScore >= 65) { label='👁 WATCHLIST';     labelColor='#7b7bff'; }
-  else if (finalScore >= 45) { label='📡 EARLY SIGNAL';  labelColor='#ff6b35'; }
+  else if (finalScore >= 65) { label='👁 WATCHLIST';       labelColor='#7b7bff'; }
+  else                       { label='📡 EARLY SIGNAL';   labelColor='#ff6b35'; }
 
   return {
     score: finalScore,
